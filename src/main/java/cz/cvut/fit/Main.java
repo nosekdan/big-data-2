@@ -85,71 +85,95 @@ public class Main {
         return new Matrix(matrix);
     }
 
-    // Benchmark a single multiplication
+    // Improved benchmark with warmup and multiple runs
     public static BenchmarkResult benchmark(Matrix A, Matrix B, int size, String algorithm) {
         OperatingSystemMXBean osBean = (com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
         MemoryMXBean memoryBean = ManagementFactory.getMemoryMXBean();
 
-        // Force garbage collection before measurement
-        System.gc();
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        // Warmup runs (to let JIT compile)
+        int warmupRuns = 3;
+        for (int i = 0; i < warmupRuns; i++) {
+            switch (algorithm) {
+                case "basic":
+                    Algorithms.matrixMultiplicationBasic(A, B, size);
+                    break;
+                case "loop":
+                    Algorithms.matrixMultiplicationLoopUnroll(A, B, size);
+                    break;
+                case "cache":
+                    Algorithms.matrixMultiplicationCache(A, B, size);
+                    break;
+                case "strassen":
+                    Algorithms.matrixMultiplicationStrassen(A, B, size);
+                    break;
+            }
         }
 
-        // Get initial metrics
-        long cpuBefore = osBean.getProcessCpuTime(); // nanoseconds
-        MemoryUsage memBefore = memoryBean.getHeapMemoryUsage();
-        long timeBefore = System.nanoTime();
+        // Actual benchmark runs
+        int runs = 5;
+        double totalTime = 0;
+        double totalMemory = 0;
+        double totalCpu = 0;
 
-        // Get process CPU time at start
-        double processCpuLoadBefore = osBean.getProcessCpuLoad();
+        for (int run = 0; run < runs; run++) {
+            // Force garbage collection before measurement
+            System.gc();
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
 
-        // Execute multiplication
-        Algorithms.Matrix result = null;
-        switch (algorithm) {
-            case "basic":
-                result = Algorithms.matrixMultiplicationBasic(A, B, size);
-                break;
-            case "loop":
-                result = Algorithms.matrixMultiplicationLoopUnroll(A, B, size);
-                break;
-            case "cache":
-                result = Algorithms.matrixMultiplicationCache(A, B, size);
-                break;
-            case "strassen":
-                result = Algorithms.matrixMultiplicationStrassen(A, B, size);
-                break;
+            // Get initial metrics
+            long cpuBefore = osBean.getProcessCpuTime();
+            MemoryUsage memBefore = memoryBean.getHeapMemoryUsage();
+            long timeBefore = System.nanoTime();
+
+            // Execute multiplication
+            Algorithms.Matrix result = null;
+            switch (algorithm) {
+                case "basic":
+                    result = Algorithms.matrixMultiplicationBasic(A, B, size);
+                    break;
+                case "loop":
+                    result = Algorithms.matrixMultiplicationLoopUnroll(A, B, size);
+                    break;
+                case "cache":
+                    result = Algorithms.matrixMultiplicationCache(A, B, size);
+                    break;
+                case "strassen":
+                    result = Algorithms.matrixMultiplicationStrassen(A, B, size);
+                    break;
+            }
+
+            // Get final metrics
+            long timeAfter = System.nanoTime();
+            MemoryUsage memAfter = memoryBean.getHeapMemoryUsage();
+            long cpuAfter = osBean.getProcessCpuTime();
+
+            // Calculate metrics for this run
+            double timeSeconds = (timeAfter - timeBefore) / 1_000_000_000.0;
+            double memoryMB = Math.abs((memAfter.getUsed() - memBefore.getUsed()) / (1024.0 * 1024.0));
+            long cpuTimeNanos = cpuAfter - cpuBefore;
+            long wallClockNanos = timeAfter - timeBefore;
+            double cpuPercent = (cpuTimeNanos / (double) wallClockNanos) * 100.0;
+
+            // Clamp to reasonable range
+            cpuPercent = Math.min(cpuPercent, 100.0 * Runtime.getRuntime().availableProcessors());
+
+            totalTime += timeSeconds;
+            totalMemory += memoryMB;
+            totalCpu += cpuPercent;
         }
 
-        // Get final metrics
-        long timeAfter = System.nanoTime();
-        MemoryUsage memAfter = memoryBean.getHeapMemoryUsage();
-        long cpuAfter = osBean.getProcessCpuTime(); // nanoseconds
+        // Average the runs
+        double avgTime = totalTime / runs;
+        double avgMemory = totalMemory / runs;
+        double avgCpu = totalCpu / runs;
 
-        // Calculate metrics
-        double timeSeconds = (timeAfter - timeBefore) / 1_000_000_000.0;
-        double timeMillis = (timeAfter - timeBefore) / 1_000_000.0;
-
-        // Memory: heap memory used during execution
-        long memUsedBefore = memBefore.getUsed();
-        long memUsedAfter = memAfter.getUsed();
-        double memoryMB = Math.abs((memUsedAfter - memUsedBefore) / (1024.0 * 1024.0));
-
-        // CPU: process CPU time used / wall clock time
-        long cpuTimeNanos = cpuAfter - cpuBefore;
-        long wallClockNanos = timeAfter - timeBefore;
-
-        // CPU percentage based on number of available processors
-        int numProcessors = Runtime.getRuntime().availableProcessors();
-        double cpuPercent = (cpuTimeNanos / (double) wallClockNanos) * 100.0;
-
-        // Clamp CPU percent to reasonable range [0, 100*numProcessors]
-        cpuPercent = Math.min(cpuPercent, 100.0 * numProcessors);
-
-        return new BenchmarkResult(size, timeSeconds, memoryMB, cpuPercent);
+        return new BenchmarkResult(size, avgTime, avgMemory, avgCpu);
     }
+
 
     // Save result matrix to file
     public static void saveMatrixResult(Matrix result, String filePath) {
